@@ -92,6 +92,8 @@ function showIngest() {
 async function loadAndRender() {
   metrics = await api("/api/metrics");
   resetFilterInputs();
+  mergeMode = false; // author keys are repository-scoped
+  mergeChecked.clear();
   populateFilterOptions();
   renderDashboard();
 }
@@ -329,6 +331,7 @@ $("#repo-select").addEventListener("change", async () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id }),
     });
+    await refreshRepoState(); // sync active repo for all later calls
     await loadAndRender();
   } catch (err) {
     setStatus("error", err.message);
