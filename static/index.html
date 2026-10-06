@@ -68,6 +68,7 @@
           </label>
           <button id="btn-apply" class="primary">Apply filters</button>
           <button id="btn-clear-filters" class="ghost">Clear</button>
+          <button id="btn-commits" class="ghost">Select commits…</button>
         </div>
       </div>
 
@@ -98,6 +99,27 @@
   </main>
 
   <div id="status" hidden></div>
+
+  <div id="commit-modal" class="modal-backdrop" hidden>
+    <div class="modal">
+      <h2>Select commits</h2>
+      <p class="hint">Choose the commit set H manually. Selection combines with
+        the other filters.</p>
+      <input id="commit-search" type="text" autocomplete="off" spellcheck="false"
+             placeholder="Filter by hash, subject or author…">
+      <div class="modal-tools">
+        <button id="commit-all" class="ghost">Select all shown</button>
+        <button id="commit-none" class="ghost">Deselect shown</button>
+        <span id="commit-count" class="note"></span>
+      </div>
+      <div id="commit-list" class="commit-list"></div>
+      <div class="modal-actions">
+        <button id="commit-cancel" class="ghost">Cancel</button>
+        <button id="commit-apply" class="primary">Apply selection</button>
+      </div>
+    </div>
+  </div>
+
   <script src="/chart.umd.js"></script>
   <script src="/app.js"></script>
 </body>

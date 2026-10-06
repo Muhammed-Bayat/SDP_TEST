@@ -66,6 +66,18 @@ then recomputed over the selected commits:
 Filters combine (all must match). The commit-set note above the tables
 describes the active commit set; **Clear** restores the unfiltered view.
 
+**Select commits…** opens the full commit list (hash, date, author, subject,
+searchable) for manually choosing the commit set H; the selection combines
+with the other filters.
+
+### Manual author merging
+
+When `.mailmap` doesn't cover it, authors can be merged by hand: in the
+**Author metrics** tab, click **Merge authors manually…**, check two or more
+authors and merge them under one canonical name/email. Manual merges persist
+per repository (alongside `.mailmap` merging) and apply to every view,
+including filters; **Reset manual merges** undoes them.
+
 ## Metric semantics
 
 - Binary files are not measured (git reports them as `-` in numstat).

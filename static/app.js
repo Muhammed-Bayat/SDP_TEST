@@ -25,6 +25,12 @@ let metrics = null;
 let currentTab = "files";
 let repoState = { repos: [], active: null };
 const charts = { churn: null, authors: null };
+let commitSel = new Set();
+let commitData = null;
+let commitSearch = "";
+let commitSnapshot = null;
+let mergeMode = false;
+let mergeChecked = new Set();
 
 async function api(path, opts) {
   const res = await fetch(path, opts);
@@ -95,6 +101,15 @@ function resetFilterInputs() {
   $("#filter-path").value = "";
   $("#filter-start").value = "";
   $("#filter-end").value = "";
+  commitSel.clear();
+  commitData = null;
+  updateCommitsButton();
+}
+
+function updateCommitsButton() {
+  $("#btn-commits").textContent = commitSel.size
+    ? `Commits: ${fmtInt(commitSel.size)} selected`
+    : "Select commits…";
 }
 
 function populateFilterOptions() {
@@ -119,16 +134,22 @@ async function applyFilters() {
   const path = $("#filter-path").value.trim();
   const start = $("#filter-start").value;
   const end = $("#filter-end").value;
-  const params = new URLSearchParams();
-  if (repoState.active) params.set("repo", repoState.active);
-  if (author) params.set("author", author);
-  if (path) params.set("path", path);
-  if (start) params.set("start", start);
-  if (end) params.set("end", end);
+  const body = { repo: repoState.active };
+  if (author) body.author = author;
+  if (path) body.path = path;
+  if (start) body.start = start;
+  if (end) body.end = end;
+  if (commitSel.size) body.commits = [...commitSel];
   setStatus("loading", "Applying filters…");
   try {
-    metrics = await api("/api/metrics?" + params.toString());
-    if (!(author || path || start || end)) populateFilterOptions();
+    metrics = await api("/api/metrics", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!(author || path || start || end || commitSel.size)) {
+      populateFilterOptions();
+    }
     renderDashboard();
   } catch (err) {
     setStatus("error", err.message);
@@ -139,6 +160,99 @@ $("#btn-apply").addEventListener("click", applyFilters);
 $("#btn-clear-filters").addEventListener("click", async () => {
   resetFilterInputs();
   await applyFilters();
+});
+
+/* ---- manual commit selection ---- */
+
+const COMMIT_ROW_CAP = 300;
+
+function filteredCommits() {
+  const q = commitSearch.trim().toLowerCase();
+  if (!q) return commitData;
+  return commitData.filter(
+    (c) =>
+      c.h.startsWith(q) ||
+      (c.subject || "").toLowerCase().includes(q) ||
+      c.name.toLowerCase().includes(q)
+  );
+}
+
+function renderCommitList() {
+  const rows = filteredCommits();
+  const shown = rows.slice(0, COMMIT_ROW_CAP);
+  $("#commit-list").innerHTML =
+    shown
+      .map(
+        (c) =>
+          `<label class="commit-row"><input type="checkbox" data-h="${esc(c.h)}" ` +
+          `${commitSel.has(c.h) ? "checked" : ""}><span class="chash">${esc(c.h.slice(0, 10))}</span>` +
+          `<span class="cdate">${fmtDate(c.ts)}</span>` +
+          `<span class="cauthor" title="${esc(c.name)}">${esc(c.name)}</span>` +
+          `<span class="csubj" title="${esc(c.subject || "")}">${esc(c.subject || "")}</span></label>`
+      )
+      .join("") +
+    (rows.length > COMMIT_ROW_CAP
+      ? `<div class="note" style="padding:8px 12px">Showing first ${fmtInt(COMMIT_ROW_CAP)} of ` +
+        `${fmtInt(rows.length)} commits — refine the search to see more.</div>`
+      : "");
+  $("#commit-count").textContent = `${fmtInt(commitSel.size)} selected`;
+}
+
+async function openCommitModal() {
+  commitSnapshot = new Set(commitSel);
+  commitSearch = "";
+  $("#commit-search").value = "";
+  setStatus("loading", "Loading commits…");
+  try {
+    const params = repoState.active ? `?repo=${encodeURIComponent(repoState.active)}` : "";
+    commitData = await api("/api/commits" + params);
+    setStatus(null);
+    $("#commit-modal").hidden = false;
+    renderCommitList();
+  } catch (err) {
+    setStatus("error", err.message);
+  }
+}
+
+function closeCommitModal() {
+  $("#commit-modal").hidden = true;
+}
+
+$("#btn-commits").addEventListener("click", openCommitModal);
+$("#commit-search").addEventListener("input", (e) => {
+  commitSearch = e.target.value;
+  renderCommitList();
+});
+$("#commit-list").addEventListener("change", (e) => {
+  const h = e.target.dataset.h;
+  if (!h) return;
+  if (e.target.checked) commitSel.add(h);
+  else commitSel.delete(h);
+  $("#commit-count").textContent = `${fmtInt(commitSel.size)} selected`;
+});
+$("#commit-all").addEventListener("click", () => {
+  filteredCommits().forEach((c) => commitSel.add(c.h));
+  renderCommitList();
+});
+$("#commit-none").addEventListener("click", () => {
+  filteredCommits().forEach((c) => commitSel.delete(c.h));
+  renderCommitList();
+});
+$("#commit-apply").addEventListener("click", async () => {
+  closeCommitModal();
+  updateCommitsButton();
+  await applyFilters();
+});
+$("#commit-cancel").addEventListener("click", () => {
+  commitSel = commitSnapshot || new Set();
+  closeCommitModal();
+  updateCommitsButton();
+});
+$("#commit-modal").addEventListener("click", (e) => {
+  if (e.target === e.currentTarget) $("#commit-cancel").click();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("#commit-modal").hidden) $("#commit-cancel").click();
 });
 
 async function init() {
@@ -254,6 +368,7 @@ function renderDashboard() {
     flt && (flt.start || flt.end)
       ? `the selected time period (${fmtDate(flt.start)} → ${fmtDate(flt.end)})`
       : null,
+    flt && flt.commits ? `the ${fmtInt(flt.commits)} manually selected commits` : null,
   ].filter(Boolean);
   $("#commit-set-note").textContent = flt
     ? `Metrics below are computed over the filtered commit set H = ${fmtInt(H)} ` +
@@ -340,19 +455,130 @@ const AUTHOR_COLS = ["Author", "Email", "Commits", "Modifications", "Churn", "Ow
 function mergeNote() {
   const am = metrics.author_merging || {};
   const merged = am.merged_authors || [];
-  if (!am.author_count) return "";
-  if (!merged.length) {
-    return `<div class="note merge-note">Author merging (.mailmap): all ` +
+  const manual = am.manual_merges || [];
+  if (!am.author_count && !manual.length) return "";
+  let html = "";
+  if (merged.length) {
+    const example = merged[0];
+    const from = example.from[0];
+    html += `<div class="note merge-note">Author merging (.mailmap): ` +
+      `${fmtInt(am.raw_identity_count)} raw identities resolved to ` +
+      `${fmtInt(am.author_count)} authors (${merged.length} merged). ` +
+      `E.g. “${esc(from.name)} &lt;${esc(from.email)}&gt;” → ` +
+      `“${esc(example.name)} &lt;${esc(example.email)}&gt;”.</div>`;
+  } else if (am.author_count) {
+    html += `<div class="note merge-note">Author merging (.mailmap): all ` +
       `${fmtInt(am.raw_identity_count)} identities are already canonical — no merges needed.</div>`;
   }
-  const example = merged[0];
-  const from = example.from[0];
-  return `<div class="note merge-note">Author merging (.mailmap): ` +
-    `${fmtInt(am.raw_identity_count)} raw identities resolved to ` +
-    `${fmtInt(am.author_count)} authors (${merged.length} merged). ` +
-    `E.g. “${esc(from.name)} &lt;${esc(from.email)}&gt;” → ` +
-    `“${esc(example.name)} &lt;${esc(example.email)}&gt;”.</div>`;
+  for (const ex of manual) {
+    const names = ex.from.map((f) => esc(f.name)).join(" + ");
+    html += `<div class="note merge-note manual">Manually merged: ` +
+      `${names} → “${esc(ex.name)} &lt;${esc(ex.email)}&gt;”.</div>`;
+  }
+  return html;
 }
+
+/* ---- manual author merging ---- */
+
+function mergeBar() {
+  if (currentTab !== "authors" || !mergeMode) {
+    return currentTab === "authors"
+      ? `<div class="merge-bar"><button id="merge-enable" class="ghost">Merge authors manually…</button></div>`
+      : "";
+  }
+  const def = (metrics.authors || []).find((a) => mergeChecked.has(a.key));
+  return `<div class="merge-bar card">
+    <div class="merge-bar-row">
+      <button id="merge-start" class="primary" ${mergeChecked.size < 2 ? "disabled" : ""}>
+        Merge ${fmtInt(mergeChecked.size)} selected…</button>
+      <button id="merge-done" class="ghost">Done</button>
+      <button id="merge-reset" class="ghost">Reset manual merges</button>
+    </div>
+    <div id="merge-form" class="merge-bar-row" hidden>
+      <label>Merged name <input id="merge-name" type="text" value="${esc(def ? def.name : "")}"></label>
+      <label>Merged email <input id="merge-email" type="text" value="${esc(def ? def.email : "")}"></label>
+      <button id="merge-apply" class="primary">Apply merge</button>
+    </div>
+  </div>`;
+}
+
+function checkedAuthors() {
+  return (metrics.authors || []).filter((a) => mergeChecked.has(a.key));
+}
+
+async function applyMergeResult(resp) {
+  metrics = resp.metrics;
+  mergeMode = false;
+  mergeChecked.clear();
+  populateFilterOptions();
+  renderDashboard();
+}
+
+async function doMerge() {
+  const name = $("#merge-name").value.trim();
+  const email = $("#merge-email").value.trim();
+  if (!name) {
+    setStatus("error", "A merged author name is required.");
+    return;
+  }
+  try {
+    const resp = await api("/api/repos/merge", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        repo: repoState.active,
+        rules: [{
+          name,
+          email,
+          members: checkedAuthors().map((a) => ({ key: a.key, name: a.name, email: a.email })),
+        }],
+      }),
+    });
+    await applyMergeResult(resp);
+  } catch (err) {
+    setStatus("error", err.message);
+  }
+}
+
+async function doMergeReset() {
+  try {
+    const resp = await api("/api/repos/merge", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repo: repoState.active, clear: true }),
+    });
+    await applyMergeResult(resp);
+  } catch (err) {
+    setStatus("error", err.message);
+  }
+}
+
+$("#table-area").addEventListener("click", (e) => {
+  const id = e.target.id;
+  if (id === "merge-enable") {
+    mergeMode = true;
+    mergeChecked.clear();
+    renderTable();
+  } else if (id === "merge-done") {
+    mergeMode = false;
+    mergeChecked.clear();
+    renderTable();
+  } else if (id === "merge-start") {
+    $("#merge-form").hidden = false;
+  } else if (id === "merge-apply") {
+    doMerge();
+  } else if (id === "merge-reset") {
+    doMergeReset();
+  }
+});
+
+$("#table-area").addEventListener("change", (e) => {
+  if (e.target.matches("input[type=checkbox][data-key]")) {
+    if (e.target.checked) mergeChecked.add(e.target.dataset.key);
+    else mergeChecked.delete(e.target.dataset.key);
+    renderTable();
+  }
+});
 
 function renderTable() {
   let html = "";
@@ -360,11 +586,16 @@ function renderTable() {
 
   if (currentTab === "authors") {
     count = metrics.authors.length;
-    html = mergeNote() +
-      `<table><thead><tr>${AUTHOR_COLS.map((c) => `<th>${c}</th>`).join("")}</tr></thead><tbody>`;
+    html = mergeBar() + mergeNote() +
+      `<table><thead><tr>${mergeMode ? "<th></th>" : ""}${AUTHOR_COLS.map((c) => `<th>${c}</th>`).join("")}</tr></thead><tbody>`;
     for (const a of metrics.authors) {
       html +=
-        `<tr><td class="path" title="${esc(a.name)}">${esc(a.name)}</td>` +
+        `<tr>` +
+        (mergeMode
+          ? `<td><input type="checkbox" data-key="${esc(a.key)}" ` +
+            `${mergeChecked.has(a.key) ? "checked" : ""}></td>`
+          : "") +
+        `<td class="path" title="${esc(a.name)}">${esc(a.name)}</td>` +
         `<td class="path" title="${esc(a.email)}">${esc(a.email)}</td>` +
         `<td>${fmtInt(a.commits)}</td><td>${fmtInt(a.mods)}</td>` +
         `<td>${fmtInt(a.churn)}</td><td>${fmtPct(a.ownership)}</td></tr>`;

@@ -30,7 +30,7 @@ DATA_DIR = Path(os.environ.get("RAT_DATA", str(PROJECT_ROOT / "data")))
 REPOS_DIR = DATA_DIR / "repos"
 ACTIVE_FILE = DATA_DIR / "active.json"
 
-COMMIT_RE = re.compile(r"^([0-9a-f]{40,64})\x1f(\d+)\x1f(.*)\x1f(.*)\x1f(.*)\x1f(.*)$")
+COMMIT_RE = re.compile(r"^([0-9a-f]{40,64})\x1f(\d+)\x1f(.*)\x1f(.*)\x1f(.*)\x1f(.*)\x1f(.*)$")
 RENAME_BRACES_RE = re.compile(r"^(.*)\{(.*) => (.*)\}(.*)$")
 
 
@@ -79,9 +79,14 @@ def current_metrics(repo_id=None):
     return entry["metrics"] if entry else None
 
 
-def _author_key(rec):
+def _author_key(rec, merge_rules=None):
     email = rec["email"].strip()
-    return (email or rec["name"]).lower()
+    key = (email or rec["name"]).lower()
+    if merge_rules:
+        rule = merge_rules.get(key)
+        if rule is not None:
+            return rule["key"]
+    return key
 
 
 def _filter_timestamp(value):
@@ -113,16 +118,19 @@ def _under(path, prefix):
     return path == prefix or path.startswith(prefix + "/")
 
 
-def filtered_metrics(repo_id=None, author=None, path=None, start=None, end=None):
+def filtered_metrics(repo_id=None, author=None, path=None, start=None, end=None,
+                     commits=None):
     """Metrics over the commit set selected by the given filters.
 
     Author selects commits by resolved (mailmap) author; path selects
     commits touching that file/directory subtree, and scopes the file and
     directory tables to it; start/end select commits by committer date
     (H_t from start to present, H_{i,j} with start inclusive and end
-    exclusive — a date given as end means through the end of that day).
-    Every metric category is then recomputed over the selected commit set.
-    With no filters the cached unfiltered metrics are returned unchanged.
+    exclusive — a date given as end means through the end of that day);
+    commits is a manually selected list of commit hashes. Every metric
+    category is then recomputed over the selected commit set, with manual
+    author merges applied. With no filters the cached unfiltered metrics
+    are returned unchanged.
     """
     repo_id = repo_id if repo_id is not None else _state["active"]
     entry = _state["repos"].get(repo_id)
@@ -135,13 +143,17 @@ def filtered_metrics(repo_id=None, author=None, path=None, start=None, end=None)
     j = _filter_timestamp(end)
     if isinstance(end, str) and end.strip() and not end.strip().isdigit():
         j += 86400  # an end date includes that whole day
+    hashes = set(commits) if commits else None
 
-    if author_key is None and not prefix and i is None and j is None:
+    if (author_key is None and not prefix and i is None and j is None
+            and hashes is None):
         return entry["metrics"]
 
     selected = []
     for rec in entry["records"]:
-        if author_key is not None and _author_key(rec) != author_key:
+        if hashes is not None and rec["h"] not in hashes:
+            continue
+        if author_key is not None and _author_key(rec, entry["merges"]) != author_key:
             continue
         if i is not None and rec["ts"] < i:
             continue
@@ -152,7 +164,7 @@ def filtered_metrics(repo_id=None, author=None, path=None, start=None, end=None)
         selected.append(rec)
 
     base = entry["metrics"]
-    result = _aggregate(selected, base["name"], base["source"])
+    result = _aggregate(selected, base["name"], base["source"], entry["merges"])
     if prefix:
         result["files"] = [f for f in result["files"] if _under(f["path"], prefix)]
         result["dirs"] = [d for d in result["dirs"] if _under(d["path"], prefix)]
@@ -161,8 +173,120 @@ def filtered_metrics(repo_id=None, author=None, path=None, start=None, end=None)
         "path": prefix,
         "start": i,
         "end": j,
+        "commits": len(hashes) if hashes else 0,
     }
     return result
+
+
+def commit_list(repo_id=None):
+    """Commit list for manual selection: hash, date, author, subject."""
+    repo_id = repo_id if repo_id is not None else _state["active"]
+    entry = _state["repos"].get(repo_id)
+    if entry is None:
+        raise IngestError(f"Unknown repository: {repo_id}")
+    return [{"h": r["h"], "ts": r["ts"], "name": r["name"], "email": r["email"],
+             "subject": r.get("subject", "")} for r in entry["records"]]
+
+
+def _identity_key(name, email):
+    email = (email or "").strip()
+    return (email or (name or "").strip()).lower()
+
+
+def _build_merge_rules(rules):
+    """Validate merge rules; returns (normalized_rules, member_key -> rule).
+
+    A rule maps its member identities (author keys after .mailmap
+    resolution) onto one canonical identity. Rules must not chain (a
+    canonical key may not itself be a member of any rule).
+    """
+    if not isinstance(rules, list) or not rules:
+        raise IngestError("Merge rules must be a non-empty list.")
+    normalized = []
+    member_keys = set()
+    canonical_keys = set()
+    for rule in rules:
+        if not isinstance(rule, dict):
+            raise IngestError("Each merge rule must be an object.")
+        name = str(rule.get("name") or "").strip()
+        email = str(rule.get("email") or "").strip()
+        members = rule.get("members")
+        if not name:
+            raise IngestError("A merge rule needs a canonical author name.")
+        if not isinstance(members, list) or not members:
+            raise IngestError("A merge rule needs at least one member.")
+        ckey = _identity_key(name, email)
+        norm_members = []
+        for mem in members:
+            if not isinstance(mem, dict) or not (mem.get("key") or "").strip():
+                raise IngestError("Each merge member needs a key.")
+            key = mem["key"].strip().lower()
+            if key in member_keys:
+                raise IngestError(f"Author {key!r} appears in more than one merge rule.")
+            member_keys.add(key)
+            norm_members.append({
+                "key": key,
+                "name": str(mem.get("name") or "").strip(),
+                "email": str(mem.get("email") or "").strip(),
+            })
+        if ckey in canonical_keys:
+            raise IngestError("Duplicate canonical author in merge rules.")
+        canonical_keys.add(ckey)
+        normalized.append({"name": name, "email": email, "members": norm_members})
+
+    table = {}
+    for rule in normalized:
+        ckey = _identity_key(rule["name"], rule["email"])
+        for mem in rule["members"]:
+            if mem["key"] == ckey:
+                continue  # merging into one of the members — identity mapping
+            table[mem["key"]] = {
+                "key": ckey, "name": rule["name"], "email": rule["email"],
+                "member_name": mem["name"], "member_email": mem["email"],
+            }
+    for rule in table.values():
+        if rule["key"] in table:
+            raise IngestError("Merge rules must not chain.")
+    return normalized, table
+
+
+def _load_merge_table(slot):
+    """Load persisted merge rules as a member-key table; never raises."""
+    f = slot / "merges.json"
+    if not f.exists():
+        return {}
+    try:
+        rules = json.loads(f.read_text(encoding="utf-8")).get("rules") or []
+        return _build_merge_rules(rules)[1]
+    except Exception:
+        return {}
+
+
+def set_manual_merges(repo_id, rules):
+    """Persist manual author merges and recompute the repository metrics."""
+    repo_id = repo_id if repo_id is not None else _state["active"]
+    entry = _state["repos"].get(repo_id)
+    if entry is None:
+        raise IngestError(f"Unknown repository: {repo_id}")
+    normalized, table = _build_merge_rules(rules)
+    entry["merges"] = table
+    (_slot(repo_id) / "merges.json").write_text(
+        json.dumps({"rules": normalized}), encoding="utf-8")
+    base = entry["metrics"]
+    entry["metrics"] = _aggregate(entry["records"], base["name"], base["source"], table)
+    return entry["metrics"]
+
+
+def clear_manual_merges(repo_id):
+    repo_id = repo_id if repo_id is not None else _state["active"]
+    entry = _state["repos"].get(repo_id)
+    if entry is None:
+        raise IngestError(f"Unknown repository: {repo_id}")
+    entry["merges"] = {}
+    (_slot(repo_id) / "merges.json").unlink(missing_ok=True)
+    base = entry["metrics"]
+    entry["metrics"] = _aggregate(entry["records"], base["name"], base["source"], {})
+    return entry["metrics"]
 
 
 def _git_env():
@@ -224,8 +348,10 @@ def _finalize_ingest(repo_id, name, source, incoming_repo):
     (slot / "cache.json").write_text(json.dumps(records), encoding="utf-8")
     (slot / "meta.json").write_text(
         json.dumps({"name": name, "source": source}), encoding="utf-8")
+    (slot / "merges.json").unlink(missing_ok=True)  # re-ingest starts fresh
     _state["repos"][repo_id] = {
         "records": records,
+        "merges": {},
         "metrics": _aggregate(records, name, source),
     }
     select_repo(repo_id)
@@ -338,7 +464,7 @@ def _compute_records(repo_dir):
     proc = _run_git(["-C", str(repo_dir), "-c", "core.quotePath=false",
                      "log", "HEAD", "--no-merges", "--numstat",
                      "--find-renames=50%",
-                     "--format=format:%H%x1f%ct%x1f%aN%x1f%aE%x1f%an%x1f%ae"])
+                     "--format=format:%H%x1f%ct%x1f%aN%x1f%aE%x1f%an%x1f%ae%x1f%s"])
     if proc.returncode != 0:
         raise IngestError(f"Failed to read git history: {_tail(proc.stderr)}")
     records = []
@@ -351,6 +477,7 @@ def _compute_records(repo_dir):
             current = {"h": m.group(1), "ts": int(m.group(2)),
                        "name": m.group(3), "email": m.group(4),
                        "raw_name": m.group(5), "raw_email": m.group(6),
+                       "subject": m.group(7),
                        "files": []}
             records.append(current)
             continue
@@ -378,7 +505,7 @@ def _zero(path):
     return {"path": path, "added": 0, "removed": 0, "mods": 0}
 
 
-def _aggregate(records, name, source):
+def _aggregate(records, name, source, merge_rules=None):
     H = len(records)
     stat = {}
     file_paths = set()
@@ -389,6 +516,7 @@ def _aggregate(records, name, source):
     months = {}
     first_ts = None
     last_ts = None
+    member_counts = defaultdict(int)
 
     for rec in records:
         ts = rec["ts"]
@@ -399,8 +527,15 @@ def _aggregate(records, name, source):
 
         email = rec["email"].strip()
         key = (email or rec["name"]).lower()
+        disp_name, disp_email = rec["name"], email
+        if merge_rules:
+            rule = merge_rules.get(key)
+            if rule is not None:
+                member_counts[key] += 1
+                key = rule["key"]
+                disp_name, disp_email = rule["name"], rule["email"]
         author = authors.setdefault(key, {
-            "name": rec["name"], "email": email,
+            "name": disp_name, "email": disp_email,
             "commits": 0, "churn": 0, "mods": 0, "ownership": 0.0})
         author["commits"] += 1
 
@@ -486,6 +621,16 @@ def _aggregate(records, name, source):
         "merged_authors": merged_authors,
     }
 
+    manual = {}
+    for member_key in member_counts:
+        rule = merge_rules[member_key]
+        manual.setdefault(rule["key"], {
+            "name": rule["name"], "email": rule["email"], "from": []})
+        manual[rule["key"]]["from"].append({
+            "name": rule["member_name"], "email": rule["member_email"],
+            "commits": member_counts[member_key]})
+    author_merging["manual_merges"] = sorted(manual.values(), key=lambda m: m["name"])
+
     return {
         "name": name,
         "source": source,
@@ -516,14 +661,20 @@ def load_cached():
             if cache_f.exists() and meta_f.exists():
                 meta = json.loads(meta_f.read_text(encoding="utf-8"))
                 records = json.loads(cache_f.read_text(encoding="utf-8"))
+                if records and "subject" not in records[0]:
+                    # cache predates commit subjects — recompute and rewrite
+                    records = _compute_records(slot / "repo")
+                    cache_f.write_text(json.dumps(records), encoding="utf-8")
             elif (slot / "repo").exists():
                 meta = {"name": repo_id, "source": {"kind": "unknown"}}
                 records = _compute_records(slot / "repo")
             else:
                 continue
+            merges = _load_merge_table(slot)
             _state["repos"][repo_id] = {
                 "records": records,
-                "metrics": _aggregate(records, meta["name"], meta.get("source")),
+                "merges": merges,
+                "metrics": _aggregate(records, meta["name"], meta.get("source"), merges),
             }
         except Exception:
             continue

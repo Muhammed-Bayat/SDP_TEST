@@ -61,12 +61,20 @@ def api_repos_select():
     return jsonify({"ok": True})
 
 
-@app.get("/api/metrics")
+@app.route("/api/metrics", methods=["GET", "POST"])
 def api_metrics():
-    repo_id = request.args.get("repo")
+    if request.method == "POST":
+        body = request.get_json(silent=True) or {}
+        repo_id = body.get("repo")
+        filters = {k: body.get(k) for k in ("author", "path", "start", "end", "commits")}
+    else:
+        repo_id = request.args.get("repo")
+        filters = {k: request.args.get(k) for k in ("author", "path", "start", "end")}
+        commits = request.args.get("commits")
+        if commits:
+            filters["commits"] = [c.strip() for c in commits.split(",") if c.strip()]
     if repo_id is not None and not engine.has_repo(repo_id):
         return jsonify({"error": f"Unknown repository: {repo_id}"}), 404
-    filters = {k: request.args.get(k) for k in ("author", "path", "start", "end")}
     try:
         if any(filters.values()):
             metrics = engine.filtered_metrics(repo_id, **filters)
@@ -77,6 +85,34 @@ def api_metrics():
     if metrics is None:
         return jsonify({"error": "No repository loaded. Clone a remote URL or upload a zip first."}), 409
     return jsonify(metrics)
+
+
+@app.get("/api/commits")
+def api_commits():
+    repo_id = request.args.get("repo")
+    if repo_id is not None and not engine.has_repo(repo_id):
+        return jsonify({"error": f"Unknown repository: {repo_id}"}), 404
+    if repo_id is None and engine.active_id() is None:
+        return jsonify({"error": "No repository loaded. Clone a remote URL or upload a zip first."}), 409
+    return jsonify(engine.commit_list(repo_id))
+
+
+@app.post("/api/repos/merge")
+def api_repos_merge():
+    body = request.get_json(silent=True) or {}
+    repo_id = body.get("repo")
+    if repo_id is not None and not engine.has_repo(repo_id):
+        return jsonify({"error": f"Unknown repository: {repo_id}"}), 404
+    try:
+        if body.get("clear"):
+            metrics = engine.clear_manual_merges(repo_id)
+        else:
+            metrics = engine.set_manual_merges(repo_id, body.get("rules"))
+    except engine.IngestError as exc:
+        return jsonify({"error": str(exc)}), 400
+    if metrics is None:
+        return jsonify({"error": "No repository loaded. Clone a remote URL or upload a zip first."}), 409
+    return jsonify({"ok": True, "metrics": metrics})
 
 
 if __name__ == "__main__":
