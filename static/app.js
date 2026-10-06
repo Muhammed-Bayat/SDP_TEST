@@ -103,6 +103,7 @@ function resetFilterInputs() {
   $("#filter-path").value = "";
   $("#filter-start").value = "";
   $("#filter-end").value = "";
+  $("#table-search").value = "";
   commitSel.clear();
   commitData = null;
   updateCommitsButton();
@@ -127,6 +128,7 @@ function populateFilterOptions() {
     .map((d) => d.path)
     .filter((p) => p)
     .sort()
+    .slice(0, 1000)
     .map((p) => `<option value="${esc(p)}">`)
     .join("");
 }
@@ -347,6 +349,8 @@ document.querySelectorAll(".tab").forEach((btn) =>
     renderTable();
   })
 );
+
+$("#table-search").addEventListener("input", renderTable);
 
 function renderDashboard() {
   $("#view-ingest").hidden = true;
@@ -583,15 +587,30 @@ $("#table-area").addEventListener("change", (e) => {
   }
 });
 
+const TABLE_ROW_CAP = 500;
+
+function tableRows() {
+  const q = ($("#table-search").value || "").trim().toLowerCase();
+  const all = currentTab === "authors"
+    ? metrics.authors || []
+    : currentTab === "files" ? metrics.files : metrics.dirs;
+  if (!q) return { all, rows: all };
+  const rows = all.filter((r) =>
+    currentTab === "authors"
+      ? r.name.toLowerCase().includes(q) || (r.email || "").toLowerCase().includes(q)
+      : r.path.toLowerCase().includes(q));
+  return { all, rows };
+}
+
 function renderTable() {
   let html = "";
-  let count = 0;
+  const { all, rows } = tableRows();
+  const shown = rows.slice(0, TABLE_ROW_CAP);
 
   if (currentTab === "authors") {
-    count = metrics.authors.length;
     html = mergeBar() + mergeNote() +
       `<table><thead><tr>${mergeMode ? "<th></th>" : ""}${AUTHOR_COLS.map((c) => `<th>${c}</th>`).join("")}</tr></thead><tbody>`;
-    for (const a of metrics.authors) {
+    for (const a of shown) {
       html +=
         `<tr>` +
         (mergeMode
@@ -604,11 +623,9 @@ function renderTable() {
         `<td>${fmtInt(a.churn)}</td><td>${fmtPct(a.ownership)}</td></tr>`;
     }
   } else {
-    const rows = currentTab === "files" ? metrics.files : metrics.dirs;
-    count = rows.length;
     html =
       `<table><thead><tr>${OBJECT_COLS.map((c) => `<th>${c}</th>`).join("")}</tr></thead><tbody>`;
-    for (const r of rows) {
+    for (const r of shown) {
       const label = r.path === "" ? "(repository root)" : r.path;
       html +=
         `<tr><td class="path" title="${esc(r.path)}">${esc(label)}</td>` +
@@ -619,10 +636,15 @@ function renderTable() {
     }
   }
   html += "</tbody></table>";
+  if (rows.length > TABLE_ROW_CAP) {
+    html += `<div class="note table-cap">Showing the first ${fmtInt(TABLE_ROW_CAP)} of ` +
+      `${fmtInt(rows.length)} rows — use the search box to narrow them down.</div>`;
+  }
   $("#table-area").innerHTML = html;
-  $("#table-count").textContent = `${fmtInt(count)} ${
-    currentTab === "authors" ? "authors" : currentTab === "files" ? "files" : "directories"
-  }`;
+  const noun = currentTab === "authors" ? "authors" : currentTab === "files" ? "files" : "directories";
+  $("#table-count").textContent = rows.length === all.length
+    ? `${fmtInt(all.length)} ${noun}`
+    : `${fmtInt(rows.length)} of ${fmtInt(all.length)} ${noun}`;
 }
 
 init();

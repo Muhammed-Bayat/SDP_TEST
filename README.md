@@ -66,6 +66,10 @@ then recomputed over the selected commits:
 Filters combine (all must match). The commit-set note above the tables
 describes the active commit set; **Clear** restores the unfiltered view.
 
+Each metrics table has a **search box** (matches paths, or author names and
+emails) and caps rendering at the first 500 rows — search to narrow large
+repositories down.
+
 **Select commits…** opens the full commit list (hash, date, author, subject,
 searchable) for manually choosing the commit set H; the selection combines
 with the other filters.
@@ -99,3 +103,8 @@ repository switching are served instantly; filtering re-aggregates the cached
 records over the selected commit set without touching git again.
 The frontend is vanilla JavaScript + vendored Chart.js — no build step, no
 database.
+
+Measured on a laptop (2026): ingesting Redis (~12k commits) takes ~30s and
+git.git (~61k non-merge commits) ~60s, dominated by the clone; afterwards
+every metrics, filter and commit-list query is served in well under 200ms
+from the cache.

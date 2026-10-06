@@ -334,6 +334,26 @@ button.ghost:hover { background: #1f2937; }
 .table-card { padding: 6px 0 0; }
 .table-wrap { max-height: 640px; overflow: auto; }
 
+.table-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 6px 14px 10px;
+}
+
+#table-search {
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  background: #fff;
+  max-width: 420px;
+  width: 100%;
+}
+
+.table-cap { margin: 10px 14px 6px; }
+
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 
 th, td {
@@ -364,7 +384,7 @@ td.path {
 }
 
 tbody tr:hover { background: #f8fafc; }
-#table-count { margin: 4px 14px; }
+#table-count { margin: 0 0 0 auto; }
 
 #status {
   position: fixed;
