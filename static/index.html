@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RAT — Repo Analysis Tool</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header>
+    <h1>RAT<span>Repo Analysis Tool</span></h1>
+    <div id="repo-badge" hidden></div>
+    <button id="btn-new" class="ghost" hidden>Analyze another repository</button>
+  </header>
+
+  <main>
+    <section id="view-ingest" hidden>
+      <h2 class="page-title">Analyse a Git repository</h2>
+      <p class="page-sub">
+        Ingest a repository to compute file, directory, repository, commit-set and
+        author metrics. Analysing a new repository replaces the current one.
+      </p>
+      <div class="ingest-grid">
+        <div class="card">
+          <h2>Clone a remote repository</h2>
+          <p class="hint">The repository is deeply cloned (full history) and analysed.</p>
+          <form id="clone-form">
+            <input id="clone-url" type="text" autocomplete="off" spellcheck="false"
+                   placeholder="https://github.com/DaveGamble/cJSON.git" required>
+            <button type="submit" class="primary">Clone &amp; analyse</button>
+          </form>
+        </div>
+        <div class="card">
+          <h2>Upload a repository zip</h2>
+          <p class="hint">A zip of the repository including its <code>.git</code> directory.</p>
+          <form id="upload-form">
+            <input id="zip-file" type="file" accept=".zip" required>
+            <button type="submit" class="primary">Upload &amp; analyse</button>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-dashboard" hidden>
+      <div class="section-label">Repository metrics — root directory over the commit set H</div>
+      <div id="source-line" class="note"></div>
+      <div id="overview" class="cards"></div>
+
+      <div class="charts">
+        <div class="card chart-card">
+          <h2>Lines added / removed over time</h2>
+          <div class="chart-box"><canvas id="chart-churn"></canvas></div>
+        </div>
+        <div class="card chart-card">
+          <h2>Top authors by churn</h2>
+          <div class="chart-box"><canvas id="chart-authors"></canvas></div>
+        </div>
+      </div>
+
+      <nav class="tabs">
+        <button class="tab active" data-tab="files">File metrics</button>
+        <button class="tab" data-tab="dirs">Directory metrics</button>
+        <button class="tab" data-tab="authors">Author metrics</button>
+      </nav>
+      <div id="commit-set-note" class="note"></div>
+      <div class="card table-card">
+        <div id="table-count" class="note"></div>
+        <div class="table-wrap" id="table-area"></div>
+      </div>
+    </section>
+  </main>
+
+  <div id="status" hidden></div>
+  <script src="/chart.umd.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
