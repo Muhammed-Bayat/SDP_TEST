@@ -21,6 +21,7 @@ import subprocess
 import time
 import zipfile
 from collections import defaultdict
+from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 
@@ -76,6 +77,92 @@ def current_metrics(repo_id=None):
         return None
     entry = _state["repos"].get(repo_id)
     return entry["metrics"] if entry else None
+
+
+def _author_key(rec):
+    email = rec["email"].strip()
+    return (email or rec["name"]).lower()
+
+
+def _filter_timestamp(value):
+    """Accept a UNIX timestamp or a YYYY-MM-DD date (UTC)."""
+    if value is None or value == "":
+        return None
+    value = str(value).strip()
+    if value.isdigit():
+        ts = int(value)
+        return ts // 1000 if ts > 10_000_000_000 else ts
+    try:
+        dt = datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        raise IngestError(
+            f"Invalid date or timestamp for time filter: {value!r} "
+            "(expected YYYY-MM-DD or a UNIX timestamp).")
+    return int(dt.replace(tzinfo=timezone.utc).timestamp())
+
+
+def _filter_prefix(path):
+    p = (path or "").strip()
+    while p.startswith("./"):
+        p = p[2:]
+    p = p.strip("/")
+    return "" if p in ("", ".") else p
+
+
+def _under(path, prefix):
+    return path == prefix or path.startswith(prefix + "/")
+
+
+def filtered_metrics(repo_id=None, author=None, path=None, start=None, end=None):
+    """Metrics over the commit set selected by the given filters.
+
+    Author selects commits by resolved (mailmap) author; path selects
+    commits touching that file/directory subtree, and scopes the file and
+    directory tables to it; start/end select commits by committer date
+    (H_t from start to present, H_{i,j} with start inclusive and end
+    exclusive — a date given as end means through the end of that day).
+    Every metric category is then recomputed over the selected commit set.
+    With no filters the cached unfiltered metrics are returned unchanged.
+    """
+    repo_id = repo_id if repo_id is not None else _state["active"]
+    entry = _state["repos"].get(repo_id)
+    if entry is None:
+        raise IngestError(f"Unknown repository: {repo_id}")
+
+    author_key = (author or "").strip().lower() or None
+    prefix = _filter_prefix(path)
+    i = _filter_timestamp(start)
+    j = _filter_timestamp(end)
+    if isinstance(end, str) and end.strip() and not end.strip().isdigit():
+        j += 86400  # an end date includes that whole day
+
+    if author_key is None and not prefix and i is None and j is None:
+        return entry["metrics"]
+
+    selected = []
+    for rec in entry["records"]:
+        if author_key is not None and _author_key(rec) != author_key:
+            continue
+        if i is not None and rec["ts"] < i:
+            continue
+        if j is not None and rec["ts"] >= j:
+            continue
+        if prefix and not any(_under(p, prefix) for p, _, _ in rec["files"]):
+            continue
+        selected.append(rec)
+
+    base = entry["metrics"]
+    result = _aggregate(selected, base["name"], base["source"])
+    if prefix:
+        result["files"] = [f for f in result["files"] if _under(f["path"], prefix)]
+        result["dirs"] = [d for d in result["dirs"] if _under(d["path"], prefix)]
+    result["filtered"] = {
+        "author": author_key or "",
+        "path": prefix,
+        "start": i,
+        "end": j,
+    }
+    return result
 
 
 def _git_env():
@@ -377,7 +464,8 @@ def _aggregate(records, name, source):
     root = finalize(stat.get("", _zero("")))
 
     author_list = []
-    for a in authors.values():
+    for key, a in authors.items():
+        a["key"] = key
         a["ownership"] = (a["churn"] / root["churn"]) if root["churn"] else 0.0
         author_list.append(a)
     author_list.sort(key=lambda a: (-a["churn"], a["name"], a["email"]))

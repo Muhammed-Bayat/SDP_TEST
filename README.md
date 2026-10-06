@@ -52,6 +52,20 @@ The dashboard shows metrics for the active repository:
   `H` = all non-merge commits reachable from `HEAD`.
 - **Author metrics** — modifications, churn and ownership per author.
 
+### Filtering
+
+The **Filters** card restricts the commit set `H`; every metric category is
+then recomputed over the selected commits:
+
+- **Author** — only commits by that (mailmap-resolved) author.
+- **File / directory** — only commits that touch that path subtree; the file
+  and directory tables are additionally scoped to it.
+- **From / To** — only commits with committer dates in the period
+  (`H_{i,j}`: from inclusive; a `To` date includes that whole day).
+
+Filters combine (all must match). The commit-set note above the tables
+describes the active commit set; **Clear** restores the unfiltered view.
+
 ## Metric semantics
 
 - Binary files are not measured (git reports them as `-` in numstat).
@@ -69,6 +83,7 @@ Python 3 + Flask backend; git is invoked once per repository
 mailmap-resolved author identities in the format string), parsed into
 per-commit records, aggregated in a single pass and cached under
 `RAT_DATA/repos/<id>/` (in-memory + JSON on disk), so metric queries and
-repository switching are served instantly.
+repository switching are served instantly; filtering re-aggregates the cached
+records over the selected commit set without touching git again.
 The frontend is vanilla JavaScript + vendored Chart.js — no build step, no
 database.

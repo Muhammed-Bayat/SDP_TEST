@@ -85,8 +85,61 @@ function showIngest() {
 
 async function loadAndRender() {
   metrics = await api("/api/metrics");
+  resetFilterInputs();
+  populateFilterOptions();
   renderDashboard();
 }
+
+function resetFilterInputs() {
+  $("#filter-author").value = "";
+  $("#filter-path").value = "";
+  $("#filter-start").value = "";
+  $("#filter-end").value = "";
+}
+
+function populateFilterOptions() {
+  $("#filter-author").innerHTML =
+    '<option value="">All authors</option>' +
+    (metrics.authors || [])
+      .map(
+        (a) =>
+          `<option value="${esc(a.key)}">${esc(a.name)} &lt;${esc(a.email)}&gt;</option>`
+      )
+      .join("");
+  $("#path-options").innerHTML = (metrics.dirs || [])
+    .map((d) => d.path)
+    .filter((p) => p)
+    .sort()
+    .map((p) => `<option value="${esc(p)}">`)
+    .join("");
+}
+
+async function applyFilters() {
+  const author = $("#filter-author").value;
+  const path = $("#filter-path").value.trim();
+  const start = $("#filter-start").value;
+  const end = $("#filter-end").value;
+  const params = new URLSearchParams();
+  if (repoState.active) params.set("repo", repoState.active);
+  if (author) params.set("author", author);
+  if (path) params.set("path", path);
+  if (start) params.set("start", start);
+  if (end) params.set("end", end);
+  setStatus("loading", "Applying filters…");
+  try {
+    metrics = await api("/api/metrics?" + params.toString());
+    if (!(author || path || start || end)) populateFilterOptions();
+    renderDashboard();
+  } catch (err) {
+    setStatus("error", err.message);
+  }
+}
+
+$("#btn-apply").addEventListener("click", applyFilters);
+$("#btn-clear-filters").addEventListener("click", async () => {
+  resetFilterInputs();
+  await applyFilters();
+});
 
 async function init() {
   try {
@@ -194,10 +247,21 @@ function renderDashboard() {
         : "Source: persisted repository";
 
   const H = metrics.commit_count;
-  $("#commit-set-note").textContent =
-    `Commit-set metrics below are computed over H = all ${fmtInt(H)} ` +
-    `non-merge commits reachable from HEAD (committer dates). ` +
-    `Author metrics are shown for the repository root (all files).`;
+  const flt = metrics.filtered;
+  const bits = [
+    flt && flt.author ? "the selected author" : null,
+    flt && flt.path ? `path “${flt.path}” (file and directory metrics are scoped to it)` : null,
+    flt && (flt.start || flt.end)
+      ? `the selected time period (${fmtDate(flt.start)} → ${fmtDate(flt.end)})`
+      : null,
+  ].filter(Boolean);
+  $("#commit-set-note").textContent = flt
+    ? `Metrics below are computed over the filtered commit set H = ${fmtInt(H)} ` +
+      `non-merge commits matching ${bits.join(" + ")}. ` +
+      `Author metrics are shown for the repository root (all files).`
+    : `Commit-set metrics below are computed over H = all ${fmtInt(H)} ` +
+      `non-merge commits reachable from HEAD (committer dates). ` +
+      `Author metrics are shown for the repository root (all files).`;
 
   const repo = metrics.repo;
   const cards = [

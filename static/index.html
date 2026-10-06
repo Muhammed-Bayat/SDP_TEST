@@ -48,6 +48,29 @@
     <section id="view-dashboard" hidden>
       <div class="section-label">Repository metrics — root directory over the commit set H</div>
       <div id="source-line" class="note"></div>
+
+      <div class="card filter-card">
+        <h2>Filters</h2>
+        <div class="filter-grid">
+          <label>Author
+            <select id="filter-author"><option value="">All authors</option></select>
+          </label>
+          <label>File / directory
+            <input id="filter-path" type="text" list="path-options" autocomplete="off"
+                   spellcheck="false" placeholder="path prefix, e.g. src/ — blank = all">
+            <datalist id="path-options"></datalist>
+          </label>
+          <label>From
+            <input id="filter-start" type="date">
+          </label>
+          <label>To
+            <input id="filter-end" type="date">
+          </label>
+          <button id="btn-apply" class="primary">Apply filters</button>
+          <button id="btn-clear-filters" class="ghost">Clear</button>
+        </div>
+      </div>
+
       <div id="overview" class="cards"></div>
 
       <div class="charts">

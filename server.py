@@ -66,7 +66,14 @@ def api_metrics():
     repo_id = request.args.get("repo")
     if repo_id is not None and not engine.has_repo(repo_id):
         return jsonify({"error": f"Unknown repository: {repo_id}"}), 404
-    metrics = engine.current_metrics(repo_id)
+    filters = {k: request.args.get(k) for k in ("author", "path", "start", "end")}
+    try:
+        if any(filters.values()):
+            metrics = engine.filtered_metrics(repo_id, **filters)
+        else:
+            metrics = engine.current_metrics(repo_id)
+    except engine.IngestError as exc:
+        return jsonify({"error": str(exc)}), 400
     if metrics is None:
         return jsonify({"error": "No repository loaded. Clone a remote URL or upload a zip first."}), 409
     return jsonify(metrics)

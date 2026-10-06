@@ -132,6 +132,48 @@ button.ghost:hover { background: #1f2937; }
 
 .note { font-size: 12.5px; color: var(--muted); margin: 0 0 10px; }
 
+.filter-card { margin: 4px 0 14px; }
+.filter-card h2 { margin-bottom: 10px; }
+
+.filter-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.filter-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+}
+
+.filter-grid select,
+.filter-grid input[type="text"],
+.filter-grid input[type="date"] {
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13.5px;
+  background: #fff;
+  color: var(--ink);
+  min-width: 150px;
+}
+
+#filter-path { min-width: 280px; }
+
+.filter-grid button.ghost {
+  border: 1px solid var(--border);
+  color: var(--muted);
+  background: transparent;
+}
+.filter-grid button.ghost:hover { background: var(--bg); }
+
 .cards {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(158px, 1fr));
