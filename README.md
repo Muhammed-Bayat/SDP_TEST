@@ -68,7 +68,8 @@ describes the active commit set; **Clear** restores the unfiltered view.
 
 Each metrics table has a **search box** (matches paths, or author names and
 emails) and caps rendering at the first 500 rows — search to narrow large
-repositories down.
+repositories down. Every column is **sortable** — click a header to sort
+(high-to-low for numbers, A-to-Z for text; click again to reverse).
 
 **Select commits…** opens the full commit list (hash, date, author, subject,
 searchable) for manually choosing the commit set H; the selection combines
@@ -108,3 +109,16 @@ Measured on a laptop (2026): ingesting Redis (~12k commits) takes ~30s and
 git.git (~61k non-merge commits) ~60s, dominated by the clone; afterwards
 every metrics, filter and commit-list query is served in well under 200ms
 from the cache.
+
+## AI declaration
+
+Development of this repository was assisted by AI.
+
+- **Tool / model:** Qoder — agentic AI coding assistant (CLI).
+- **Mode:** interactive agentic sessions. The assistant implemented the
+  feature batches, edited files, ran the dev server and verification
+  scripts (oracle, filter, merge and large-repo reference checks) directly.
+- **Human involvement:** the author specified each feature batch and the
+  acceptance criteria, manually smoke-tested the UI after each batch and
+  reviewed the results; all changes are committed under the author's
+  identity.

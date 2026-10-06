@@ -92,6 +92,7 @@ function showIngest() {
 async function loadAndRender() {
   metrics = await api("/api/metrics");
   resetFilterInputs();
+  tableSort = { key: null, dir: -1 };
   mergeMode = false; // author keys are repository-scoped
   mergeChecked.clear();
   populateFilterOptions();
@@ -343,6 +344,7 @@ $("#repo-select").addEventListener("change", async () => {
 document.querySelectorAll(".tab").forEach((btn) =>
   btn.addEventListener("click", () => {
     currentTab = btn.dataset.tab;
+    tableSort = { key: null, dir: -1 };
     document
       .querySelectorAll(".tab")
       .forEach((b) => b.classList.toggle("active", b === btn));
@@ -351,6 +353,18 @@ document.querySelectorAll(".tab").forEach((btn) =>
 );
 
 $("#table-search").addEventListener("input", renderTable);
+
+$("#table-area").addEventListener("click", (e) => {
+  const th = e.target.closest("th[data-key]");
+  if (!th) return;
+  const key = th.dataset.key;
+  if (tableSort.key === key) {
+    tableSort.dir *= -1;
+  } else {
+    tableSort = { key, dir: TEXT_KEYS.has(key) ? 1 : -1 };
+  }
+  renderTable();
+});
 
 function renderDashboard() {
   $("#view-ingest").hidden = true;
@@ -406,6 +420,10 @@ function renderDashboard() {
     )
     .join("");
 
+  $("#tab-count-files").textContent = fmtInt(metrics.files.length);
+  $("#tab-count-dirs").textContent = fmtInt(metrics.dirs.length);
+  $("#tab-count-authors").textContent = fmtInt(metrics.authors.length);
+
   renderCharts();
   renderTable();
   setStatus(null);
@@ -453,11 +471,75 @@ function renderCharts() {
   });
 }
 
-const OBJECT_COLS = [
-  "Path", "Added", "Removed", "Growth", "Churn",
-  "Modifications", "Mod. frequency", "Churn rate",
+const FILE_COLS = [
+  ["path", "Path"], ["added", "Added"], ["removed", "Removed"],
+  ["growth", "Growth"], ["churn", "Churn"], ["mods", "Modifications"],
+  ["freq", "Mod. frequency"], ["rate", "Churn rate"],
 ];
-const AUTHOR_COLS = ["Author", "Email", "Commits", "Modifications", "Churn", "Ownership"];
+const AUTHOR_COLS = [
+  ["name", "Author"], ["email", "Email"], ["commits", "Commits"],
+  ["mods", "Modifications"], ["churn", "Churn"], ["ownership", "Ownership"],
+];
+
+let tableSort = { key: null, dir: -1 };
+const TEXT_KEYS = new Set(["path", "name", "email"]);
+const SORT_GETTERS = {
+  path: (r) => r.path, added: (r) => r.added, removed: (r) => r.removed,
+  growth: (r) => r.growth, churn: (r) => r.churn, mods: (r) => r.mods,
+  freq: (r) => r.freq, rate: (r) => r.rate,
+  name: (a) => a.name, email: (a) => a.email, commits: (a) => a.commits,
+  ownership: (a) => a.ownership,
+};
+
+function sortRows(rows) {
+  const { key, dir } = tableSort;
+  if (!key) return rows;
+  const get = SORT_GETTERS[key];
+  if (!get) return rows;
+  return [...rows].sort((x, y) => {
+    const vx = get(x), vy = get(y);
+    const c = typeof vx === "string" ? vx.localeCompare(vy) : vx - vy;
+    return c * dir;
+  });
+}
+
+function thHtml(key, label) {
+  const cls = tableSort.key === key
+    ? (tableSort.dir === 1 ? "sorted asc" : "sorted desc")
+    : "";
+  return `<th data-key="${key}" class="${cls}">${label}<span class="sort-ind"></span></th>`;
+}
+
+function barTd(value, pct, tone) {
+  const w = pct > 0 ? Math.min(100, Math.max(pct, 1.5)) : 0;
+  return `<td><div class="valbar"><span>${esc(value)}</span>` +
+    `<div class="track"><div class="fill ${tone || ""}" style="width:${w.toFixed(1)}%"></div></div></div></td>`;
+}
+
+const AVATAR_COLORS = [
+  "#2563eb", "#059669", "#d97706", "#7c3aed", "#db2777",
+  "#0891b2", "#65a30d", "#dc2626", "#4f46e5", "#0f766e",
+];
+
+function avatarColor(key) {
+  let h = 0;
+  const s = key || "";
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return AVATAR_COLORS[h % AVATAR_COLORS.length];
+}
+
+function initials(name) {
+  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+  const s = ((parts[0] || "?")[0] + (parts[1] ? parts[1][0] : "")).toUpperCase();
+  return s || "?";
+}
+
+function emptyState() {
+  const q = ($("#table-search").value || "").trim();
+  return q
+    ? `<div class="empty-state">No rows match “${esc(q)}” — try a different search.</div>`
+    : `<div class="empty-state">No rows to show for the current view.</div>`;
+}
 
 function mergeNote() {
   const am = metrics.author_merging || {};
@@ -605,37 +687,55 @@ function tableRows() {
 function renderTable() {
   let html = "";
   const { all, rows } = tableRows();
-  const shown = rows.slice(0, TABLE_ROW_CAP);
+  const sorted = sortRows(rows);
+  const shown = sorted.slice(0, TABLE_ROW_CAP);
+  const maxChurn = sorted.reduce((m, r) => Math.max(m, r.churn || 0), 0) || 1;
 
   if (currentTab === "authors") {
-    html = mergeBar() + mergeNote() +
-      `<table><thead><tr>${mergeMode ? "<th></th>" : ""}${AUTHOR_COLS.map((c) => `<th>${c}</th>`).join("")}</tr></thead><tbody>`;
-    for (const a of shown) {
-      html +=
-        `<tr>` +
-        (mergeMode
-          ? `<td><input type="checkbox" data-key="${esc(a.key)}" ` +
-            `${mergeChecked.has(a.key) ? "checked" : ""}></td>`
-          : "") +
-        `<td class="path" title="${esc(a.name)}">${esc(a.name)}</td>` +
-        `<td class="path" title="${esc(a.email)}">${esc(a.email)}</td>` +
-        `<td>${fmtInt(a.commits)}</td><td>${fmtInt(a.mods)}</td>` +
-        `<td>${fmtInt(a.churn)}</td><td>${fmtPct(a.ownership)}</td></tr>`;
+    html = mergeBar() + mergeNote();
+    if (shown.length) {
+      html += `<table><thead><tr>${mergeMode ? "<th></th>" : ""}` +
+        AUTHOR_COLS.map(([k, l]) => thHtml(k, l)).join("") + `</tr></thead><tbody>`;
+      for (const a of shown) {
+        html +=
+          `<tr>` +
+          (mergeMode
+            ? `<td class="check"><input type="checkbox" data-key="${esc(a.key)}" ` +
+              `${mergeChecked.has(a.key) ? "checked" : ""}></td>`
+            : "") +
+          `<td class="who"><div class="author-cell">` +
+          `<span class="avatar" style="background:${avatarColor(a.key)}">${esc(initials(a.name))}</span>` +
+          `<span class="author-name" title="${esc(a.name)}">${esc(a.name)}</span></div></td>` +
+          `<td class="path email" title="${esc(a.email)}">${esc(a.email)}</td>` +
+          `<td>${fmtInt(a.commits)}</td><td>${fmtInt(a.mods)}</td>` +
+          barTd(fmtInt(a.churn), (a.churn / maxChurn) * 100, "") +
+          barTd(fmtPct(a.ownership), a.ownership * 100, "good") + `</tr>`;
+      }
+      html += "</tbody></table>";
+    } else {
+      html += emptyState();
     }
   } else {
-    html =
-      `<table><thead><tr>${OBJECT_COLS.map((c) => `<th>${c}</th>`).join("")}</tr></thead><tbody>`;
-    for (const r of shown) {
-      const label = r.path === "" ? "(repository root)" : r.path;
-      html +=
-        `<tr><td class="path" title="${esc(r.path)}">${esc(label)}</td>` +
-        `<td>${fmtInt(r.added)}</td><td>${fmtInt(r.removed)}</td>` +
-        `<td class="${r.growth >= 0 ? "pos" : "neg"}">${fmtSigned(r.growth)}</td>` +
-        `<td>${fmtInt(r.churn)}</td><td>${fmtInt(r.mods)}</td>` +
-        `<td>${fmtPct(r.freq)}</td><td>${fmtRate(r.rate)}</td></tr>`;
+    if (shown.length) {
+      html =
+        `<table><thead><tr>${FILE_COLS.map(([k, l]) => thHtml(k, l)).join("")}</tr></thead><tbody>`;
+      for (const r of shown) {
+        const label = r.path === "" ? "(repository root)" : r.path;
+        html +=
+          `<tr><td class="path" title="${esc(r.path)}">${esc(label)}</td>` +
+          `<td class="pos">${fmtInt(r.added)}</td>` +
+          `<td class="neg">${fmtInt(r.removed)}</td>` +
+          `<td><span class="badge ${r.growth >= 0 ? "pos" : "neg"}">${fmtSigned(r.growth)}</span></td>` +
+          barTd(fmtInt(r.churn), (r.churn / maxChurn) * 100, "") +
+          `<td>${fmtInt(r.mods)}</td>` +
+          barTd(fmtPct(r.freq), r.freq * 100, "good") +
+          `<td>${fmtRate(r.rate)}</td></tr>`;
+      }
+      html += "</tbody></table>";
+    } else {
+      html = emptyState();
     }
   }
-  html += "</tbody></table>";
   if (rows.length > TABLE_ROW_CAP) {
     html += `<div class="note table-cap">Showing the first ${fmtInt(TABLE_ROW_CAP)} of ` +
       `${fmtInt(rows.length)} rows — use the search box to narrow them down.</div>`;
