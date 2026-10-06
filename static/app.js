@@ -23,6 +23,7 @@ const esc = (s) =>
 
 let metrics = null;
 let currentTab = "files";
+let repoState = { repos: [], active: null };
 const charts = { churn: null, authors: null };
 
 async function api(path, opts) {
@@ -52,11 +53,33 @@ function setStatus(kind, text) {
     '<span class="spinner"></span><span>' + esc(text) + "</span>";
 }
 
+function renderRepoSelect() {
+  const picker = $("#repo-picker");
+  const select = $("#repo-select");
+  if (!repoState.repos.length) {
+    picker.hidden = true;
+    return;
+  }
+  picker.hidden = false;
+  select.innerHTML = repoState.repos
+    .map(
+      (r) =>
+        `<option value="${esc(r.id)}" ${r.id === repoState.active ? "selected" : ""}>` +
+        `${esc(r.name)} — ${fmtInt(r.commit_count)} commits</option>`
+    )
+    .join("");
+}
+
+async function refreshRepoState() {
+  repoState = await api("/api/state");
+  renderRepoSelect();
+}
+
 function showIngest() {
   $("#view-ingest").hidden = false;
   $("#view-dashboard").hidden = true;
-  $("#repo-badge").hidden = true;
   $("#btn-new").hidden = true;
+  renderRepoSelect();
   setStatus(null);
 }
 
@@ -67,8 +90,8 @@ async function loadAndRender() {
 
 async function init() {
   try {
-    const state = await api("/api/state");
-    if (state.loaded) {
+    await refreshRepoState();
+    if (repoState.repos.length) {
       await loadAndRender();
     } else {
       showIngest();
@@ -85,6 +108,7 @@ async function runIngest(fetchCall, busyText) {
   setStatus("loading", busyText);
   try {
     await fetchCall();
+    await refreshRepoState();
     await loadAndRender();
   } catch (err) {
     setStatus("error", err.message);
@@ -129,6 +153,21 @@ $("#upload-form").addEventListener("submit", (e) => {
 
 $("#btn-new").addEventListener("click", showIngest);
 
+$("#repo-select").addEventListener("change", async () => {
+  const id = $("#repo-select").value;
+  setStatus("loading", "Switching repository…");
+  try {
+    await api("/api/repos/select", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    await loadAndRender();
+  } catch (err) {
+    setStatus("error", err.message);
+  }
+});
+
 document.querySelectorAll(".tab").forEach((btn) =>
   btn.addEventListener("click", () => {
     currentTab = btn.dataset.tab;
@@ -142,9 +181,9 @@ document.querySelectorAll(".tab").forEach((btn) =>
 function renderDashboard() {
   $("#view-ingest").hidden = true;
   $("#view-dashboard").hidden = false;
-  $("#repo-badge").hidden = false;
   $("#btn-new").hidden = false;
-  $("#repo-badge").textContent = metrics.name;
+  renderRepoSelect();
+  $("#clone-url").value = "";
 
   const src = metrics.source || {};
   $("#source-line").textContent =
@@ -234,13 +273,30 @@ const OBJECT_COLS = [
 ];
 const AUTHOR_COLS = ["Author", "Email", "Commits", "Modifications", "Churn", "Ownership"];
 
+function mergeNote() {
+  const am = metrics.author_merging || {};
+  const merged = am.merged_authors || [];
+  if (!am.author_count) return "";
+  if (!merged.length) {
+    return `<div class="note merge-note">Author merging (.mailmap): all ` +
+      `${fmtInt(am.raw_identity_count)} identities are already canonical — no merges needed.</div>`;
+  }
+  const example = merged[0];
+  const from = example.from[0];
+  return `<div class="note merge-note">Author merging (.mailmap): ` +
+    `${fmtInt(am.raw_identity_count)} raw identities resolved to ` +
+    `${fmtInt(am.author_count)} authors (${merged.length} merged). ` +
+    `E.g. “${esc(from.name)} &lt;${esc(from.email)}&gt;” → ` +
+    `“${esc(example.name)} &lt;${esc(example.email)}&gt;”.</div>`;
+}
+
 function renderTable() {
   let html = "";
   let count = 0;
 
   if (currentTab === "authors") {
     count = metrics.authors.length;
-    html =
+    html = mergeNote() +
       `<table><thead><tr>${AUTHOR_COLS.map((c) => `<th>${c}</th>`).join("")}</tr></thead><tbody>`;
     for (const a of metrics.authors) {
       html +=

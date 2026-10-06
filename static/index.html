@@ -9,7 +9,10 @@
 <body>
   <header>
     <h1>RAT<span>Repo Analysis Tool</span></h1>
-    <div id="repo-badge" hidden></div>
+    <div id="repo-picker" hidden>
+      <label for="repo-select">Repository</label>
+      <select id="repo-select"></select>
+    </div>
     <button id="btn-new" class="ghost" hidden>Analyze another repository</button>
   </header>
 
@@ -18,7 +21,8 @@
       <h2 class="page-title">Analyse a Git repository</h2>
       <p class="page-sub">
         Ingest a repository to compute file, directory, repository, commit-set and
-        author metrics. Analysing a new repository replaces the current one.
+        author metrics. Every repository you analyse is kept in the list above;
+        the newly analysed one becomes active.
       </p>
       <div class="ingest-grid">
         <div class="card">

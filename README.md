@@ -36,7 +36,13 @@ Ingest a repository either by:
 1. **Remote URL** — the repository is deeply cloned (full history) and analysed.
 2. **Zip upload** — a zip of the repository *including its `.git` directory*.
 
-The dashboard then shows:
+Repositories are **kept in a registry**: each one you analyse stays in the
+repository selector in the header, and the most recently analysed one becomes
+active. Switch between them at any time — metrics for every registered
+repository are cached, so switching is instant. Re-analysing the same remote
+URL replaces that repository's entry.
+
+The dashboard shows metrics for the active repository:
 
 - **Repository metrics** — metrics of the root directory over the commit set.
 - **File metrics** — per file.
@@ -52,13 +58,17 @@ The dashboard then shows:
 - Merge commits are excluded; commits are identified by committer date.
 - Renames are detected at the 50% similarity threshold; changes are attributed
   to the object's new path, and deletions count as removed lines.
-- Authors are resolved through the repository's `.mailmap`.
+- Authors are resolved through the repository's `.mailmap`: when several raw
+  identities map to one canonical author they are merged (the Authors tab shows
+  how many raw identities were resolved and which were merged).
 
 ## Implementation
 
 Python 3 + Flask backend; git is invoked once per repository
-(`git log --numstat --find-renames=50% --use-mailmap --no-merges`), parsed into
-per-commit records, aggregated in a single pass and cached in `RAT_DATA`
-(in-memory + JSON on disk), so metric queries are served instantly.
+(`git log --numstat --find-renames=50% --no-merges` with both raw and
+mailmap-resolved author identities in the format string), parsed into
+per-commit records, aggregated in a single pass and cached under
+`RAT_DATA/repos/<id>/` (in-memory + JSON on disk), so metric queries and
+repository switching are served instantly.
 The frontend is vanilla JavaScript + vendored Chart.js — no build step, no
 database.

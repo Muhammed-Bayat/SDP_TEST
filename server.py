@@ -19,14 +19,11 @@ def index():
 
 @app.get("/api/state")
 def api_state():
-    metrics = engine.current_metrics()
-    if metrics is None:
-        return jsonify({"loaded": False})
+    repos = engine.repo_list()
     return jsonify({
-        "loaded": True,
-        "name": metrics["name"],
-        "source": metrics["source"],
-        "commit_count": metrics["commit_count"],
+        "loaded": bool(repos and engine.active_id() is not None),
+        "repos": repos,
+        "active": engine.active_id(),
     })
 
 
@@ -34,10 +31,10 @@ def api_state():
 def api_repos_url():
     body = request.get_json(silent=True) or {}
     try:
-        name = engine.ingest_clone(body.get("url"))
+        repo_id = engine.ingest_clone(body.get("url"))
     except engine.IngestError as exc:
         return jsonify({"error": str(exc)}), 400
-    return jsonify({"ok": True, "name": name})
+    return jsonify({"ok": True, "id": repo_id})
 
 
 @app.post("/api/repos/upload")
@@ -45,15 +42,31 @@ def api_repos_upload():
     name = request.args.get("name") or "repository"
     data = request.get_data()
     try:
-        name = engine.ingest_zip(data, name)
+        repo_id = engine.ingest_zip(data, name)
     except engine.IngestError as exc:
         return jsonify({"error": str(exc)}), 400
-    return jsonify({"ok": True, "name": name})
+    return jsonify({"ok": True, "id": repo_id})
+
+
+@app.post("/api/repos/select")
+def api_repos_select():
+    body = request.get_json(silent=True) or {}
+    repo_id = body.get("id")
+    if not repo_id or not engine.has_repo(repo_id):
+        return jsonify({"error": f"Unknown repository: {repo_id}"}), 404
+    try:
+        engine.select_repo(repo_id)
+    except engine.IngestError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True})
 
 
 @app.get("/api/metrics")
 def api_metrics():
-    metrics = engine.current_metrics()
+    repo_id = request.args.get("repo")
+    if repo_id is not None and not engine.has_repo(repo_id):
+        return jsonify({"error": f"Unknown repository: {repo_id}"}), 404
+    metrics = engine.current_metrics(repo_id)
     if metrics is None:
         return jsonify({"error": "No repository loaded. Clone a remote URL or upload a zip first."}), 409
     return jsonify(metrics)
